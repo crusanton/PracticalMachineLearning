@@ -1,0 +1,139 @@
+---
+title: "Practical Machine Learning Final Project"
+author: "crusanton"
+date: "11/9/2017"
+output: html_document
+---
+
+## Project Introduction
+Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+## Data Locations
+Training:  https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+Test:      https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+### Load Libraries
+```{r LibraryChunk, echo=TRUE,cache= TRUE}
+#opts_chunk$set(echo = TRUE, results = 'hold')
+library(caret)
+library(gbm)
+library(knitr)
+library(randomForest)
+library(RColorBrewer)
+library(rpart)
+library(rpart.plot)
+```
+
+### Upload Datasets and Partition
+```{r UploadChunk, echo=TRUE,cache= TRUE}
+set.seed(12345)
+TrainingURL <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+TrainingDataset <- read.csv(url(TrainingURL), na.strings=c("NA","#DIV/0!",""))
+TestingDataset <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+inTrain <- createDataPartition(TrainingDataset$classe, p=0.6, list=FALSE)
+myTraining <- TrainingDataset[inTrain, ]
+myTesting <- TrainingDataset[-inTrain, ]
+# Check size of Training 
+dim(myTraining)
+# Check size of Testing
+dim(myTesting)
+```
+
+### Clean Data
+```{r CleanChunk, echo=TRUE,cache= TRUE}
+# Remove the Near Zero Variance
+HoldNZV <- nearZeroVar(myTraining, saveMetrics=TRUE)
+myTraining <- myTraining[,HoldNZV$nzv==FALSE]
+HoldNZV<- nearZeroVar(myTesting,saveMetrics=TRUE)
+myTesting <- myTesting[,HoldNZV$nzv==FALSE]
+myTraining <- myTraining[c(-1)]
+
+HoldTraining <- myTraining
+for(i in 1:length(myTraining)) {
+    if( sum( is.na( myTraining[, i] ) ) /nrow(myTraining) >= .7) {
+        for(j in 1:length(HoldTraining)) {
+            if( length( grep(names(myTraining[i]), names(HoldTraining)[j]) ) == 1)  {
+                HoldTraining <- HoldTraining[ , -j]
+            }   
+        } 
+    }
+}
+
+# Get rid of unnecessary columns
+myTraining <- HoldTraining
+rm(HoldTraining)
+ClassWith <- colnames(myTraining)
+ClassWithout <- colnames(myTraining[, -58])      # remove classe 
+myTesting <- myTesting[ClassWith]                # compare columns
+TestingDataset <- TestingDataset[ClassWithout]   # compare columns
+
+# Same data type
+for (i in 1:length(TestingDataset) ) {
+    for(j in 1:length(myTraining)) {
+        if( length( grep(names(myTraining[i]), names(TestingDataset)[j]) ) == 1)  {
+            class(TestingDataset[j]) <- class(myTraining[i])
+        }      
+    }      
+}
+
+TestingDataset <- rbind(myTraining[2, -58] , TestingDataset)
+TestingDataset <- TestingDataset[-1,]
+```
+
+### Confusion Matrix
+```{r ConfusionChunk, echo=TRUE,cache= TRUE}
+set.seed(12345)
+Model1 <- rpart(classe ~ ., data=myTraining, method="class")
+
+CMPrediction <- predict(Model1, myTesting, type = "class")
+CMTreeData <- confusionMatrix(CMPrediction, myTesting$classe)
+CMTreeData
+                                       
+plot(CMTreeData$table, col = CMTreeData$byClass, main = paste("Decision Tree Confusion Matrix: Accuracy =", round(CMTreeData$overall['Accuracy'], 4)))
+```
+
+### Random Tree
+```{r RandomChunk, echo=TRUE,cache= TRUE}
+set.seed(12345)
+Model2 <- randomForest(classe ~ ., data=myTraining)
+RTPrediction <- predict(Model2, myTesting, type = "class")
+CMRFdata <- confusionMatrix(RTPrediction, myTesting$classe)
+CMRFdata
+
+plot(Model2)
+plot(CMRFdata$table, col = CMTreeData$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(CMRFdata$overall['Accuracy'], 4)))
+```
+
+### Generalized Boosted Regression (GBM)
+```{r GBMChunk, echo=TRUE,cache= TRUE}
+set.seed(12345)
+TrainControlModel <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+TrainGBM <- train(classe ~ ., data=myTraining, method = "gbm", trControl = TrainControlModel, verbose = FALSE)
+GBMPrediction <- predict(TrainGBM, newdata=myTesting)
+GBMTesting <- confusionMatrix(GBMPrediction, myTesting$classe)
+GBMTesting
+plot(TrainGBM, ylim=c(0.9, 1))
+```
+
+### Predict on Testing
+```{r PredictChunk, echo=TRUE,cache= TRUE}
+TestingPrediction <- predict(Model2, TestingDataset, type = "class")
+TestingPrediction
+```
+
+### Write to file
+```{r WriteChunk, echo=TRUE,cache= TRUE}
+WritePrediction = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+WritePrediction(TestingPrediction)
+
+```
